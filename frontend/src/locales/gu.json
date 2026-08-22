@@ -1,0 +1,36 @@
+{
+  "brand": {
+    "name": "LearnAI",
+    "tagline": "વધુ સ્માર્ટ રીતે શીખો. વધુ સારું સમજો."
+  },
+  "nav": {
+    "dashboard": "ડેશબોર્ડ",
+    "materials": "મારી સામગ્રી",
+    "summarizer": "AI સારાંશકર્તા",
+    "tutor": "AI ટ્યુટર",
+    "quizCraft": "ક્વિઝ-ક્રાફ્ટ",
+    "analytics": "એનાલિટિક્સ",
+    "bookmarks": "બુકમાર્ક્સ",
+    "search": "શોધો",
+    "profile": "પ્રોફાઇલ",
+    "settings": "સેટિંગ્સ",
+    "admin": "એડમિન",
+    "logout": "સાઇન આઉટ",
+    "login": "સાઇન ઇન",
+    "register": "શરૂ કરો"
+  },
+  "dashboard": {
+    "welcome": "નમસ્તે",
+    "subtitle": "તમારી અભ્યાસ યાત્રા ચાલુ રાખો.",
+    "continueLearning": "અભ્યાસ ચાલુ રાખો",
+    "yourProgress": "તમારી પ્રગતિ",
+    "recentActivity": "તાજેતરની પ્રવૃત્તિ",
+    "recommended": "તમારા માટે ભલામણ કરેલ",
+    "materialsStudied": "અભ્યાસ કરેલ સામગ્રી",
+    "quizzesAttempted": "પૂર્ણ થયેલ ક્વિઝ",
+    "averageScore": "સરેરાશ સ્કોર",
+    "studyStreak": "અભ્યાસ સ્ટ્રીક",
+    "days": "દિવસો",
+    "viewAll": "બધા જુઓ"
+  }
+}
