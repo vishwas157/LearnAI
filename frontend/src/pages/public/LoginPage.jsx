@@ -3,12 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useTranslation } from 'react-i18next';
-import { Mail, Lock, GraduationCap, ArrowRight, UserCheck, ShieldCheck, AlertCircle, RotateCcw } from 'lucide-react';
+import { Mail, Lock, GraduationCap, UserCheck, ShieldCheck } from 'lucide-react';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 
 const LoginPage = () => {
-  const { login, resendVerification } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const { t } = useTranslation();
@@ -17,44 +17,32 @@ const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Unverified Email Warning State
-  const [unverifiedEmail, setUnverifiedEmail] = useState(null);
-  const [isResending, setIsResending] = useState(false);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setUnverifiedEmail(null);
     setLoading(true);
 
-    const res = await login({ email, password });
-    setLoading(false);
-
-    if (res.success) {
-      if (res.data?.user?.role === 'admin') {
-        navigate('/admin');
-      } else {
-        navigate('/dashboard');
+    try {
+      const res = await login({ email, password });
+      if (res && res.success) {
+        if (res.data?.user?.role === 'admin') {
+          navigate('/admin');
+        } else {
+          navigate('/dashboard');
+        }
       }
-    } else if (res.code === 'EMAIL_NOT_VERIFIED') {
-      setUnverifiedEmail(res.email || email);
+    } catch (err) {
+      toast.error(err.message || 'An error occurred during login.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleResend = async () => {
-    if (!unverifiedEmail) return;
-    setIsResending(true);
-    await resendVerification(unverifiedEmail);
-    setIsResending(false);
-  };
-
   const handleDemoStudent = () => {
-    setUnverifiedEmail(null);
     setEmail('student@learnai.com');
     setPassword('password123');
   };
 
   const handleDemoAdmin = () => {
-    setUnverifiedEmail(null);
     setEmail('admin@learnai.com');
     setPassword('adminpassword123');
   };
@@ -74,35 +62,6 @@ const LoginPage = () => {
             Sign in to access your study library and AI tools
           </p>
         </div>
-
-        {/* Unverified Email Warning Banner */}
-        {unverifiedEmail && (
-          <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2.5">
-            <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <h2 className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                  Email Verification Required
-                </h2>
-                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
-                  Please verify your email address (<strong>{unverifiedEmail}</strong>) before signing in.
-                </p>
-              </div>
-            </div>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              icon={RotateCcw}
-              isLoading={isResending}
-              onClick={handleResend}
-              className="w-full text-xs font-semibold border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-            >
-              Resend verification email
-            </Button>
-          </div>
-        )}
 
         {/* Login Card */}
         <Card className="p-6 sm:p-8 space-y-5">

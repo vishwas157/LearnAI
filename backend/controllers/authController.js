@@ -13,7 +13,7 @@ const generateToken = (id) => {
 };
 
 /**
- * @desc    Register a new user (Requires real email verification)
+ * @desc    Register a new user (Direct registration - No email verification required)
  * @route   POST /api/auth/register
  * @access  Public
  */
@@ -40,57 +40,26 @@ const register = async (req, res) => {
     return errorResponse(res, 'Please provide a valid academic or personal email address', 400);
   }
 
-  // Block disposable temporary email domains
-  if (isDisposableEmail(normalizedEmail)) {
-    return errorResponse(res, 'Disposable / temporary email addresses are not permitted. Please use your academic or personal email.', 400);
-  }
-
   // Check if user already exists
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
-    if (!existingUser.emailVerified) {
-      return errorResponse(res, 'An unverified account with this email already exists. Please check your inbox or request a new verification link.', 400);
-    }
     return errorResponse(res, 'An account with this email already exists', 400);
   }
 
-  // Generate cryptographically secure random verification token
-  const rawVerificationToken = crypto.randomBytes(32).toString('hex');
-  const verificationTokenHash = crypto
-    .createHash('sha256')
-    .update(rawVerificationToken)
-    .digest('hex');
-  const verificationTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-  // Create new user in unverified state
+  // Create new user directly in verified state
   const user = await User.create({
     name: name.trim(),
     email: normalizedEmail,
     password,
     preferredLanguage: ['en', 'hi', 'gu'].includes(preferredLanguage) ? preferredLanguage : 'en',
-    role: role === 'admin' ? 'admin' : 'student',
+    role: ['student', 'teacher', 'admin'].includes(role) ? role : 'student',
     avatar: 'avatar-1',
-    emailVerified: false,
-    verificationTokenHash,
-    verificationTokenExpires,
+    emailVerified: true,
     studyStreak: 1,
     lastActiveDate: new Date(),
   });
 
-  // Construct dynamic frontend verification URL
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const verificationUrl = `${clientUrl}/verify-email?token=${rawVerificationToken}`;
-
-  // Send branded verification email
-  try {
-    await sendVerificationEmail({
-      to: user.email,
-      name: user.name,
-      verificationUrl,
-    });
-  } catch (emailErr) {
-    console.error('[LearnAI Auth] Failed to dispatch verification email:', emailErr.message || emailErr);
-  }
+  const token = generateToken(user._id);
 
   return successResponse(res, {
     user: {
@@ -99,109 +68,37 @@ const register = async (req, res) => {
       email: user.email,
       role: user.role,
       preferredLanguage: user.preferredLanguage,
-      emailVerified: false,
+      avatar: user.avatar,
+      emailVerified: true,
+      studyStreak: user.studyStreak,
       createdAt: user.createdAt,
     },
-    emailVerified: false,
-    verificationSentTo: user.email,
-    ...(process.env.NODE_ENV !== 'production' ? { debugToken: rawVerificationToken } : {}),
-  }, 'Registration successful! Verification email sent. Please check your inbox to activate your account.', 201);
+    token,
+  }, 'Registration successful! Account created.', 201);
 };
 
 /**
- * @desc    Verify email address using token
+ * @desc    Verify email address (Stub for backward compatibility)
  * @route   GET /api/auth/verify-email
  * @access  Public
  */
 const verifyEmail = async (req, res) => {
-  const { token } = req.query;
-
-  if (!token || typeof token !== 'string') {
-    return errorResponse(res, 'Verification token is required', 400);
-  }
-
-  // Hash the raw token to compare with database
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-  const user = await User.findOne({
-    verificationTokenHash: tokenHash,
-  }).select('+verificationTokenHash +verificationTokenExpires');
-
-  if (!user) {
-    return errorResponse(res, 'Invalid or already used verification token.', 400);
-  }
-
-  // Check token expiration
-  if (!user.verificationTokenExpires || user.verificationTokenExpires < new Date()) {
-    return errorResponse(res, 'Verification token has expired. Please request a new verification link.', 400);
-  }
-
-  // Activate account
-  user.emailVerified = true;
-  user.verificationTokenHash = null;
-  user.verificationTokenExpires = null;
-  await user.save();
-
-  console.log(`[LearnAI Auth] Email verified successfully for: ${user.email}`);
-
   return successResponse(res, {
-    email: user.email,
     emailVerified: true,
-  }, 'Your email has been verified successfully! You can now sign in.');
+  }, 'Your account is active. You can sign in directly.');
 };
 
 /**
- * @desc    Resend email verification link
+ * @desc    Resend email verification link (Stub for backward compatibility)
  * @route   POST /api/auth/resend-verification
  * @access  Public
  */
 const resendVerification = async (req, res) => {
-  const { email } = req.body;
-
-  if (!email) {
-    return errorResponse(res, 'Please provide your email address', 400);
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const user = await User.findOne({ email: normalizedEmail });
-
-  if (!user) {
-    return errorResponse(res, 'No account found with this email address.', 404);
-  }
-
-  if (user.emailVerified) {
-    return errorResponse(res, 'This email address is already verified. You can log in directly.', 400);
-  }
-
-  // Generate new token & invalidate previous
-  const rawVerificationToken = crypto.randomBytes(32).toString('hex');
-  const verificationTokenHash = crypto
-    .createHash('sha256')
-    .update(rawVerificationToken)
-    .digest('hex');
-  const verificationTokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-  user.verificationTokenHash = verificationTokenHash;
-  user.verificationTokenExpires = verificationTokenExpires;
-  await user.save();
-
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-  const verificationUrl = `${clientUrl}/verify-email?token=${rawVerificationToken}`;
-
-  await sendVerificationEmail({
-    to: user.email,
-    name: user.name,
-    verificationUrl,
-  });
-
-  return successResponse(res, {
-    email: user.email,
-    ...(process.env.NODE_ENV !== 'production' ? { debugToken: rawVerificationToken } : {}),
-  }, `A new verification email has been sent to ${user.email}`);
+  return successResponse(res, {}, 'Email verification is not required. You can sign in directly.');
 };
 
 /**
- * @desc    Authenticate user & get token (Enforces emailVerified)
+ * @desc    Authenticate user & get token
  * @route   POST /api/auth/login
  * @access  Public
  */
@@ -214,7 +111,7 @@ const login = async (req, res) => {
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  // Check for user (include password and emailVerified fields)
+  // Check for user
   const user = await User.findOne({ email: normalizedEmail }).select('+password');
   if (!user) {
     return errorResponse(res, 'Invalid email or password', 401);
@@ -226,17 +123,9 @@ const login = async (req, res) => {
     return errorResponse(res, 'Invalid email or password', 401);
   }
 
-  // Enforce Real Email Verification
+  // Ensure emailVerified is true
   if (!user.emailVerified) {
-    return res.status(403).json({
-      success: false,
-      code: 'EMAIL_NOT_VERIFIED',
-      message: 'Please verify your email address before logging in.',
-      data: {
-        email: user.email,
-        emailVerified: false,
-      },
-    });
+    user.emailVerified = true;
   }
 
   // Update streak if active on a new calendar day
@@ -263,7 +152,7 @@ const login = async (req, res) => {
       role: user.role,
       preferredLanguage: user.preferredLanguage,
       avatar: user.avatar,
-      emailVerified: user.emailVerified,
+      emailVerified: true,
       studyStreak: user.studyStreak,
       createdAt: user.createdAt,
     },

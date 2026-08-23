@@ -67,16 +67,7 @@ export const AuthProvider = ({ children }) => {
       }
       return { success: false, message: res.message || 'Login failed' };
     } catch (err) {
-      const errData = err.response?.data;
-      if (errData?.code === 'EMAIL_NOT_VERIFIED') {
-        return {
-          success: false,
-          code: 'EMAIL_NOT_VERIFIED',
-          message: errData.message || 'Please verify your email before logging in.',
-          email: errData.data?.email || email,
-        };
-      }
-      const msg = errData?.message || 'Invalid email or password';
+      const msg = err.response?.data?.message || err.message || 'Invalid email or password';
       toast.error(msg);
       return { success: false, message: msg };
     }
@@ -85,18 +76,23 @@ export const AuthProvider = ({ children }) => {
   const register = async (userData) => {
     try {
       const res = await authService.register(userData);
-      if (res.success) {
-        toast.success(res.message || 'Registration successful! Verification email sent.');
-        return {
-          success: true,
-          emailVerified: false,
-          email: userData.email,
-          message: res.message,
-        };
+      if (res.success && res.data) {
+        const { user: loggedInUser, token: authToken } = res.data;
+        if (loggedInUser && authToken) {
+          setUser(loggedInUser);
+          setToken(authToken);
+          localStorage.setItem('learnai_token', authToken);
+          localStorage.setItem('learnai_user', JSON.stringify(loggedInUser));
+          if (loggedInUser.preferredLanguage) {
+            i18n.changeLanguage(loggedInUser.preferredLanguage);
+          }
+        }
+        toast.success('Account created successfully!');
+        return { success: true, data: res.data };
       }
       return { success: false, message: res.message || 'Registration failed' };
     } catch (err) {
-      const msg = err.response?.data?.message || 'Registration failed';
+      const msg = err.response?.data?.message || err.message || 'Registration failed';
       toast.error(msg);
       return { success: false, message: msg };
     }

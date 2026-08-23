@@ -27,7 +27,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['student', 'admin'],
+    enum: ['student', 'teacher', 'admin'],
     default: 'student',
   },
   preferredLanguage: {
@@ -41,7 +41,7 @@ const userSchema = new mongoose.Schema({
   },
   emailVerified: {
     type: Boolean,
-    default: false,
+    default: true,
   },
   verificationTokenHash: {
     type: String,

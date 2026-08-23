@@ -30,18 +30,18 @@ async function runTestSuite() {
     const healthRes = await request(`${API_BASE}/health`);
     assert(healthRes.data.status === 'healthy', 'GET /api/health - Server is running and healthy');
 
-    // 2. Disposable Email Blocklist Validation
-    const disposableRes = await request(`${API_BASE}/auth/register`, {
+    // 2. Invalid Email Syntax Rejection
+    const invalidEmailRes = await request(`${API_BASE}/auth/register`, {
       method: 'POST',
       body: JSON.stringify({
-        name: 'Spam Bot',
-        email: 'fakeuser@mailinator.com',
+        name: 'Invalid Email User',
+        email: 'invalid-email-format',
         password: 'password123',
       }),
     });
-    assert(disposableRes.status === 400 && disposableRes.data.success === false, 'POST /api/auth/register - Disposable email domain (mailinator.com) is blocked');
+    assert(invalidEmailRes.status === 400 && invalidEmailRes.data.success === false, 'POST /api/auth/register - Invalid email format rejected');
 
-    // 3. New User Registration Flow (Email Verification Required)
+    // 3. New User Registration Flow (Direct Registration - No Email Verification Required)
     const testEmail = `newstudent_${Date.now()}@university.edu`;
     const regRes = await request(`${API_BASE}/auth/register`, {
       method: 'POST',
@@ -49,11 +49,12 @@ async function runTestSuite() {
         name: 'Jordan Miller',
         email: testEmail,
         password: 'studentpassword123',
+        confirmPassword: 'studentpassword123',
         preferredLanguage: 'en',
+        role: 'student',
       }),
     });
-    assert(regRes.data.success === true && regRes.data.data.emailVerified === false, 'POST /api/auth/register - Account created with emailVerified: false');
-    const initialToken = regRes.data.data.debugToken;
+    assert(regRes.data.success === true && regRes.data.data.token && regRes.data.data.user.emailVerified === true, 'POST /api/auth/register - Account created with immediate JWT token and emailVerified: true');
 
     // 4. Duplicate Email Rejection
     const dupRes = await request(`${API_BASE}/auth/register`, {
@@ -66,33 +67,17 @@ async function runTestSuite() {
     });
     assert(dupRes.status === 400 && dupRes.data.success === false, 'POST /api/auth/register - Duplicate registration rejected');
 
-    // 5. Login Attempt Before Verification (Must be Blocked)
-    const preVerifyLogin = await request(`${API_BASE}/auth/login`, {
+    // 5. Invalid Password Login Rejection
+    const badLoginRes = await request(`${API_BASE}/auth/login`, {
       method: 'POST',
       body: JSON.stringify({
         email: testEmail,
-        password: 'studentpassword123',
+        password: 'wrongpassword',
       }),
     });
-    assert(preVerifyLogin.status === 403 && preVerifyLogin.data.code === 'EMAIL_NOT_VERIFIED', 'POST /api/auth/login - Unverified account login blocked with EMAIL_NOT_VERIFIED code');
+    assert(badLoginRes.status === 401 && badLoginRes.data.success === false, 'POST /api/auth/login - Incorrect password rejected with 401');
 
-    // 6. Resend Verification Token Flow
-    const resendRes = await request(`${API_BASE}/auth/resend-verification`, {
-      method: 'POST',
-      body: JSON.stringify({ email: testEmail }),
-    });
-    assert(resendRes.data.success === true && resendRes.data.data.debugToken, 'POST /api/auth/resend-verification - Successfully generated new verification link');
-    const freshToken = resendRes.data.data.debugToken;
-
-    // 7. Verify Invalidation of Old Token
-    const oldTokenVerify = await request(`${API_BASE}/auth/verify-email?token=${initialToken}`);
-    assert(oldTokenVerify.status === 400 && oldTokenVerify.data.success === false, 'GET /api/auth/verify-email - Old token is invalidated after resend');
-
-    // 8. Verify Email Address via New Token
-    const validVerify = await request(`${API_BASE}/auth/verify-email?token=${freshToken}`);
-    assert(validVerify.data.success === true && validVerify.data.data.emailVerified === true, 'GET /api/auth/verify-email - Valid token activates account');
-
-    // 9. Login Succeeded After Verification
+    // 6. Direct User Login
     const postVerifyLogin = await request(`${API_BASE}/auth/login`, {
       method: 'POST',
       body: JSON.stringify({
@@ -100,7 +85,7 @@ async function runTestSuite() {
         password: 'studentpassword123',
       }),
     });
-    assert(postVerifyLogin.data.success === true && postVerifyLogin.data.data.token, 'POST /api/auth/login - Verified user logs in successfully');
+    assert(postVerifyLogin.data.success === true && postVerifyLogin.data.data.token, 'POST /api/auth/login - User logs in directly and receives JWT');
     const newStudentToken = postVerifyLogin.data.data.token;
     const studentAuthHeader = { headers: { Authorization: `Bearer ${newStudentToken}` } };
 
