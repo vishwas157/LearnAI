@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 
 let mongoServer = null;
 
+const isDBConnected = () => {
+  return mongoose.connection.readyState === 1;
+};
+
 const connectDB = async () => {
   try {
     const mongoUri =
@@ -12,7 +16,7 @@ const connectDB = async () => {
 
     try {
       const conn = await mongoose.connect(mongoUri, {
-        serverSelectionTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 3000,
       });
 
       console.log(
@@ -54,16 +58,14 @@ const connectDB = async () => {
         return true;
       }
 
-      console.warn(
-        '[Database] Continuing without MongoDB connection.'
-      );
+      console.log('[Database] MongoDB unavailable');
+      console.log('[Demo Mode] Running without database persistence');
 
       return false;
     }
   } catch (error) {
-    console.error(
-      `[Database] Connection Error: ${error.message}`
-    );
+    console.log('[Database] MongoDB unavailable');
+    console.log('[Demo Mode] Running without database persistence');
 
     return false;
   }
@@ -89,4 +91,5 @@ const disconnectDB = async () => {
 module.exports = {
   connectDB,
   disconnectDB,
+  isDBConnected,
 };

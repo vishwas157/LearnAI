@@ -3,7 +3,17 @@ const Material = require('../models/Material');
 const ChatSession = require('../models/ChatSession');
 const Quiz = require('../models/Quiz');
 const LearningActivity = require('../models/LearningActivity');
+const demoStore = require('../services/demoStore');
+const { isDBConnected } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
+
+const isDemoUser = (req) => {
+  if (!isDBConnected()) return true;
+  if (req.user?.isDemo) return true;
+  const idStr = (req.user?._id || req.user?.id || '').toString();
+  return idStr.startsWith('local-') || idStr.startsWith('demo-') || idStr.startsWith('user-');
+};
+
 
 /**
  * @desc    Generate AI Summary (5 modes: quick, medium, detailed, bullet_points, exam_revision)
@@ -14,11 +24,13 @@ const summarizeContent = async (req, res) => {
   let { text, materialId, mode = 'medium', language = 'en' } = req.body;
 
   if (materialId) {
-    const material = await Material.findById(materialId);
-    if (!material) {
-      return errorResponse(res, 'Specified study material not found', 404);
+    if (isDemoUser(req)) {
+      const mat = demoStore.getMaterialById(materialId);
+      if (mat) text = mat.content;
+    } else {
+      const material = await Material.findById(materialId);
+      if (material) text = material.content;
     }
-    text = material.content;
   }
 
   if (!text || text.trim().length === 0) {
@@ -32,14 +44,17 @@ const summarizeContent = async (req, res) => {
       language: language || req.user.preferredLanguage || 'en',
     });
 
-    // Log activity
-    await LearningActivity.create({
-      user: req.user._id,
-      activityType: 'summarize',
-      material: materialId || null,
-      durationSeconds: 45,
-      metadata: { mode, language },
-    });
+    if (!isDemoUser(req)) {
+      try {
+        await LearningActivity.create({
+          user: req.user._id,
+          activityType: 'summarize',
+          material: materialId || null,
+          durationSeconds: 45,
+          metadata: { mode, language },
+        });
+      } catch (err) {}
+    }
 
     return successResponse(res, {
       summary,
@@ -48,12 +63,7 @@ const summarizeContent = async (req, res) => {
       materialId: materialId || null,
     }, 'Summary generated successfully');
   } catch (error) {
-    const statusCode = error.code === 'MISSING_API_KEY' ? 503 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      code: error.code || 'AI_SERVICE_ERROR',
-      message: error.message || 'Unable to generate summary right now.',
-    });
+    return errorResponse(res, error.message || 'Unable to generate summary right now.', 500);
   }
 };
 
@@ -67,6 +77,48 @@ const chatTutor = async (req, res) => {
 
   if (!message || message.trim() === '') {
     return errorResponse(res, 'Message text cannot be empty', 400);
+  }
+
+  let materialContext = '';
+  if (materialId) {
+    if (isDemoUser(req)) {
+      const mat = demoStore.getMaterialById(materialId);
+      if (mat) materialContext = mat.content;
+    } else {
+      const mat = await Material.findById(materialId);
+      if (mat) materialContext = mat.content;
+    }
+  }
+
+  if (isDemoUser(req)) {
+    let session = sessionId ? demoStore.getChatSessionById(sessionId, req.user?._id) : null;
+    const historyMessages = session ? session.messages : [];
+    
+    // Add current user message to conversation list for Gemini
+    const allMessages = [...historyMessages, { role: 'user', content: message }];
+
+    const assistantReply = await chatWithTutor({
+      messages: allMessages,
+      materialContext,
+      subject,
+      mode,
+      language: language || req.user?.preferredLanguage || 'en',
+    });
+
+    const updatedSession = demoStore.saveChatMessage(
+      session?._id || sessionId,
+      message,
+      assistantReply,
+      req.user,
+      { subject, materialId }
+    );
+
+    return successResponse(res, {
+      sessionId: updatedSession._id,
+      reply: assistantReply,
+      messages: updatedSession.messages,
+      mode,
+    }, 'AI Tutor response received');
   }
 
   let session;
@@ -84,12 +136,9 @@ const chatTutor = async (req, res) => {
     });
   }
 
-  let materialContext = '';
-  if (materialId || session.materialReference) {
-    const mat = await Material.findById(materialId || session.materialReference);
-    if (mat) {
-      materialContext = mat.content;
-    }
+  if (!materialContext && session.materialReference) {
+    const mat = await Material.findById(session.materialReference);
+    if (mat) materialContext = mat.content;
   }
 
   // Push user message to session
@@ -101,7 +150,6 @@ const chatTutor = async (req, res) => {
   });
 
   try {
-    // Call Gemini AI Tutor service with mode
     const assistantReply = await chatWithTutor({
       messages: session.messages,
       materialContext,
@@ -110,7 +158,6 @@ const chatTutor = async (req, res) => {
       language: language || req.user.preferredLanguage || 'en',
     });
 
-    // Push assistant reply to session
     session.messages.push({
       role: 'assistant',
       content: assistantReply,
@@ -120,14 +167,15 @@ const chatTutor = async (req, res) => {
 
     await session.save();
 
-    // Log activity
-    await LearningActivity.create({
-      user: req.user._id,
-      activityType: 'ai_chat',
-      material: session.materialReference || null,
-      durationSeconds: 40,
-      metadata: { sessionId: session._id, subject: session.subject, mode },
-    });
+    try {
+      await LearningActivity.create({
+        user: req.user._id,
+        activityType: 'ai_chat',
+        material: session.materialReference || null,
+        durationSeconds: 40,
+        metadata: { sessionId: session._id, subject: session.subject, mode },
+      });
+    } catch (err) {}
 
     return successResponse(res, {
       sessionId: session._id,
@@ -136,12 +184,7 @@ const chatTutor = async (req, res) => {
       mode,
     }, 'AI Tutor response received');
   } catch (error) {
-    const statusCode = error.code === 'MISSING_API_KEY' ? 503 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      code: error.code || 'AI_SERVICE_ERROR',
-      message: error.message || 'Unable to connect to the AI service.',
-    });
+    return errorResponse(res, error.message || 'Unable to connect to the AI service.', 500);
   }
 };
 
@@ -159,8 +202,13 @@ const explainTopic = async (req, res) => {
 
   let materialContext = '';
   if (materialId) {
-    const mat = await Material.findById(materialId);
-    if (mat) materialContext = mat.content;
+    if (isDemoUser(req)) {
+      const mat = demoStore.getMaterialById(materialId);
+      if (mat) materialContext = mat.content;
+    } else {
+      const mat = await Material.findById(materialId);
+      if (mat) materialContext = mat.content;
+    }
   }
 
   const prompt = [
@@ -187,12 +235,7 @@ const explainTopic = async (req, res) => {
       language,
     });
   } catch (error) {
-    const statusCode = error.code === 'MISSING_API_KEY' ? 503 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      code: error.code || 'AI_SERVICE_ERROR',
-      message: error.message || 'Unable to generate concept explanation.',
-    });
+    return errorResponse(res, error.message || 'Unable to generate concept explanation.', 500);
   }
 };
 
@@ -213,11 +256,20 @@ const generateQuizAI = async (req, res) => {
   let resolvedSubject = subject;
 
   if (materialId) {
-    const mat = await Material.findById(materialId);
-    if (mat) {
-      materialContent = mat.content;
-      if (!resolvedTopic) resolvedTopic = mat.title;
-      if (!resolvedSubject || resolvedSubject === 'General') resolvedSubject = mat.subject;
+    if (isDemoUser(req)) {
+      const mat = demoStore.getMaterialById(materialId);
+      if (mat) {
+        materialContent = mat.content;
+        if (!resolvedTopic) resolvedTopic = mat.title;
+        if (!resolvedSubject || resolvedSubject === 'General') resolvedSubject = mat.subject;
+      }
+    } else {
+      const mat = await Material.findById(materialId);
+      if (mat) {
+        materialContent = mat.content;
+        if (!resolvedTopic) resolvedTopic = mat.title;
+        if (!resolvedSubject || resolvedSubject === 'General') resolvedSubject = mat.subject;
+      }
     }
   }
 
@@ -232,7 +284,24 @@ const generateQuizAI = async (req, res) => {
       language: language || req.user.preferredLanguage || 'en',
     });
 
-    // Save the generated quiz to the database
+    if (isDemoUser(req)) {
+      const createdQuiz = demoStore.createQuiz({
+        title: quizData.title || `${resolvedTopic} Quiz`,
+        description: `AI-generated quiz focusing on ${resolvedTopic} (${resolvedSubject}) with ${difficulty} difficulty.`,
+        subject: quizData.subject || resolvedSubject || 'General',
+        difficulty: quizData.difficulty || difficulty || 'medium',
+        questions: quizData.questions,
+        generatedByAI: true,
+        materialReference: materialId || null,
+        timeLimitMinutes: Math.max(5, (quizData.questions?.length || 5) * 2),
+      }, req.user);
+
+      return successResponse(res, {
+        quiz: createdQuiz,
+      }, 'Quiz generated and saved successfully', 201);
+    }
+
+    // Save the generated quiz to MongoDB
     const createdQuiz = await Quiz.create({
       title: quizData.title || `${resolvedTopic} Quiz`,
       description: `AI-generated quiz focusing on ${resolvedTopic} (${resolvedSubject}) with ${difficulty} difficulty.`,
@@ -249,12 +318,7 @@ const generateQuizAI = async (req, res) => {
       quiz: createdQuiz,
     }, 'Quiz generated and saved successfully', 201);
   } catch (error) {
-    const statusCode = error.code === 'MISSING_API_KEY' ? 503 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      code: error.code || 'AI_SERVICE_ERROR',
-      message: error.message || 'Unable to generate quiz with AI.',
-    });
+    return errorResponse(res, error.message || 'Unable to generate quiz with AI.', 500);
   }
 };
 
@@ -264,6 +328,11 @@ const generateQuizAI = async (req, res) => {
  * @access  Private
  */
 const getChatSessions = async (req, res) => {
+  if (isDemoUser(req)) {
+    const sessions = demoStore.getChatSessions(req.user?._id);
+    return successResponse(res, { sessions });
+  }
+
   const sessions = await ChatSession.find({ user: req.user._id })
     .sort('-updatedAt')
     .populate('materialReference', 'title subject');
@@ -277,6 +346,14 @@ const getChatSessions = async (req, res) => {
  * @access  Private
  */
 const getChatSessionById = async (req, res) => {
+  if (isDemoUser(req) || req.params.id.startsWith('session-')) {
+    const session = demoStore.getChatSessionById(req.params.id, req.user?._id);
+    if (!session) {
+      return errorResponse(res, 'Chat session not found', 404);
+    }
+    return successResponse(res, { session });
+  }
+
   const session = await ChatSession.findOne({ _id: req.params.id, user: req.user._id })
     .populate('materialReference', 'title subject content');
 
@@ -293,6 +370,10 @@ const getChatSessionById = async (req, res) => {
  * @access  Private
  */
 const deleteChatSession = async (req, res) => {
+  if (isDemoUser(req) || req.params.id.startsWith('session-')) {
+    return successResponse(res, {}, 'Chat session deleted successfully');
+  }
+
   const session = await ChatSession.findOneAndDelete({ _id: req.params.id, user: req.user._id });
 
   if (!session) {
@@ -311,3 +392,5 @@ module.exports = {
   getChatSessionById,
   deleteChatSession,
 };
+
+

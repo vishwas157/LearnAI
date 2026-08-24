@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTranslation } from 'react-i18next';
+import { analyticsService } from '../../services/analyticsService';
+import { materialService } from '../../services/materialService';
+import { quizService } from '../../services/quizService';
 
 import {
   BookOpen,
@@ -36,102 +39,77 @@ const DashboardPage = () => {
 
   /*
   |--------------------------------------------------------------------------
-  | Load local dashboard data
-  |--------------------------------------------------------------------------
-  | Dashboard no longer calls MongoDB/backend APIs.
-  | This keeps the dashboard working with the simple local login system.
+  | Load dashboard data (Backend API with local fallback)
   |--------------------------------------------------------------------------
   */
 
   useEffect(() => {
-    const loadLocalDashboard = () => {
+    let isMounted = true;
+
+    const loadDashboardData = async () => {
       try {
-        const savedMaterials = localStorage.getItem(
-          'learnai_materials'
-        );
+        const [analyticsRes, materialsRes, quizzesRes] = await Promise.allSettled([
+          analyticsService.getAnalytics(),
+          materialService.getMaterials(),
+          quizService.getQuizzes(),
+        ]);
 
-        const savedQuizzes = localStorage.getItem(
-          'learnai_quizzes'
-        );
+        if (!isMounted) return;
 
-        const savedAnalytics = localStorage.getItem(
-          'learnai_analytics'
-        );
+        let loadedMaterials = [];
+        let loadedQuizzes = [];
+        let loadedAnalytics = null;
 
-        const localMaterials = savedMaterials
-          ? JSON.parse(savedMaterials)
-          : [];
+        if (materialsRes.status === 'fulfilled' && materialsRes.value?.data?.materials) {
+          loadedMaterials = materialsRes.value.data.materials;
+          setMaterials(loadedMaterials);
+        }
 
-        const localQuizzes = savedQuizzes
-          ? JSON.parse(savedQuizzes)
-          : [];
+        if (quizzesRes.status === 'fulfilled' && quizzesRes.value?.data?.quizzes) {
+          loadedQuizzes = quizzesRes.value.data.quizzes;
+          setQuizzes(loadedQuizzes);
+        }
 
-        const localAnalytics = savedAnalytics
-          ? JSON.parse(savedAnalytics)
-          : {};
+        if (analyticsRes.status === 'fulfilled' && analyticsRes.value?.data?.analytics) {
+          loadedAnalytics = analyticsRes.value.data.analytics;
+          setAnalytics(loadedAnalytics);
+        }
 
-        setMaterials(
-          Array.isArray(localMaterials)
-            ? localMaterials
-            : []
-        );
+        // If backend returned empty or was unreachable, fallback to localStorage
+        if (loadedMaterials.length === 0) {
+          const savedMaterials = localStorage.getItem('learnai_materials');
+          if (savedMaterials) {
+            try { setMaterials(JSON.parse(savedMaterials)); } catch {}
+          }
+        }
 
-        setQuizzes(
-          Array.isArray(localQuizzes)
-            ? localQuizzes
-            : []
-        );
+        if (loadedQuizzes.length === 0) {
+          const savedQuizzes = localStorage.getItem('learnai_quizzes');
+          if (savedQuizzes) {
+            try { setQuizzes(JSON.parse(savedQuizzes)); } catch {}
+          }
+        }
 
-        setAnalytics({
-          totalMaterials:
-            localAnalytics.totalMaterials ??
-            localMaterials.length ??
-            0,
-
-          totalQuizzesAttempted:
-            localAnalytics.totalQuizzesAttempted ??
-            0,
-
-          averageScore:
-            localAnalytics.averageScore ??
-            0,
-
-          studyStreakDays:
-            user?.studyStreak ||
-            localAnalytics.studyStreakDays ||
-            1,
-
-          recentActivities:
-            Array.isArray(
-              localAnalytics.recentActivities
-            )
-              ? localAnalytics.recentActivities
-              : [],
-        });
+        if (!loadedAnalytics) {
+          const savedAnalytics = localStorage.getItem('learnai_analytics');
+          if (savedAnalytics) {
+            try { setAnalytics(JSON.parse(savedAnalytics)); } catch {}
+          }
+        }
       } catch (error) {
-        console.warn(
-          'Failed to load local dashboard data:',
-          error
-        );
-
-        setMaterials([]);
-        setQuizzes([]);
-
-        setAnalytics({
-          totalMaterials: 0,
-          totalQuizzesAttempted: 0,
-          averageScore: 0,
-          studyStreakDays:
-            user?.studyStreak || 1,
-          recentActivities: [],
-        });
+        console.warn('Dashboard data fetch fallback:', error);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
-    loadLocalDashboard();
+    loadDashboardData();
+
+    return () => {
+      isMounted = false;
+    };
   }, [user]);
+
 
   /*
   |--------------------------------------------------------------------------

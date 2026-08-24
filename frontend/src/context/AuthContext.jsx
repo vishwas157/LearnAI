@@ -5,7 +5,28 @@ import i18n from '../locales/i18n';
 const AuthContext = createContext(null);
 
 const USER_KEY = 'learnai_user';
+const TOKEN_KEY = 'learnai_token';
 const PASSWORD_KEY = 'learnai_password';
+
+const buildLocalToken = (userObj) => {
+  try {
+    const payload = {
+      id: userObj.id || userObj._id || 'local-demo-student',
+      _id: userObj.id || userObj._id || 'local-demo-student',
+      name: userObj.name || 'Demo Student',
+      email: userObj.email || 'student@learnai.com',
+      role: userObj.role || 'student',
+      preferredLanguage: userObj.preferredLanguage || 'en',
+      avatar: userObj.avatar || 'avatar-1',
+      emailVerified: userObj.emailVerified !== false,
+      studyStreak: userObj.studyStreak || 1,
+    };
+    return `local_${encodeURIComponent(JSON.stringify(payload))}`;
+  } catch {
+    return 'local_%7B%22id%22%3A%22local-demo-student%22%2C%22email%22%3A%22student%40learnai.com%22%7D';
+  }
+};
+
 
 const getStoredUser = () => {
   try {
@@ -73,8 +94,12 @@ export const AuthProvider = ({ children }) => {
       const loggedInUser = {
         id:
           normalizedEmail === 'admin@learnai.com'
-            ? 'demo-admin'
-            : 'demo-student',
+            ? 'demo-admin-id'
+            : 'demo-student-id',
+        _id:
+          normalizedEmail === 'admin@learnai.com'
+            ? 'demo-admin-id'
+            : 'demo-student-id',
         name: account.name,
         email: normalizedEmail,
         role: account.role,
@@ -85,9 +110,16 @@ export const AuthProvider = ({ children }) => {
         createdAt: new Date().toISOString(),
       };
 
+      const token = buildLocalToken(loggedInUser);
+
       localStorage.setItem(
         USER_KEY,
         JSON.stringify(loggedInUser)
+      );
+
+      localStorage.setItem(
+        TOKEN_KEY,
+        token
       );
 
       localStorage.setItem(
@@ -105,6 +137,7 @@ export const AuthProvider = ({ children }) => {
         success: true,
         data: {
           user: loggedInUser,
+          token,
         },
       };
     }
@@ -119,6 +152,9 @@ export const AuthProvider = ({ children }) => {
       storedUser.email === normalizedEmail &&
       storedPassword === password
     ) {
+      const token = buildLocalToken(storedUser);
+      localStorage.setItem(TOKEN_KEY, token);
+
       setUser(storedUser);
 
       if (storedUser.preferredLanguage) {
@@ -133,6 +169,7 @@ export const AuthProvider = ({ children }) => {
         success: true,
         data: {
           user: storedUser,
+          token,
         },
       };
     }
@@ -203,6 +240,7 @@ export const AuthProvider = ({ children }) => {
 
     const newUser = {
       id: `user-${Date.now()}`,
+      _id: `user-${Date.now()}`,
       name: name.trim(),
       email: normalizedEmail,
       role: role === 'admin' ? 'admin' : 'student',
@@ -218,9 +256,16 @@ export const AuthProvider = ({ children }) => {
       createdAt: new Date().toISOString(),
     };
 
+    const token = buildLocalToken(newUser);
+
     localStorage.setItem(
       USER_KEY,
       JSON.stringify(newUser)
+    );
+
+    localStorage.setItem(
+      TOKEN_KEY,
+      token
     );
 
     localStorage.setItem(
@@ -242,6 +287,7 @@ export const AuthProvider = ({ children }) => {
       success: true,
       data: {
         user: newUser,
+        token,
       },
     };
   };
@@ -256,8 +302,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
 
     localStorage.removeItem(USER_KEY);
-
-    // Password is also removed for security.
+    localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(PASSWORD_KEY);
 
     toast.success('Logged out successfully');
@@ -326,9 +371,16 @@ export const AuthProvider = ({ children }) => {
       );
     }
 
+    const token = buildLocalToken(updatedUser);
+
     localStorage.setItem(
       USER_KEY,
       JSON.stringify(updatedUser)
+    );
+
+    localStorage.setItem(
+      TOKEN_KEY,
+      token
     );
 
     setUser(updatedUser);
@@ -348,6 +400,7 @@ export const AuthProvider = ({ children }) => {
       user: updatedUser,
       data: {
         user: updatedUser,
+        token,
       },
     };
   };
@@ -380,11 +433,13 @@ export const AuthProvider = ({ children }) => {
     };
   };
 
+  const currentToken = user ? (localStorage.getItem(TOKEN_KEY) || buildLocalToken(user)) : null;
+
   return (
     <AuthContext.Provider
       value={{
         user,
-        token: user ? 'local-session' : null,
+        token: currentToken,
         loading,
 
         isAuthenticated: !!user,

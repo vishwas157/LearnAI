@@ -3,7 +3,16 @@ const Material = require('../models/Material');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const LearningActivity = require('../models/LearningActivity');
+const demoStore = require('../services/demoStore');
+const { isDBConnected } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
+
+const isDemoUser = (req) => {
+  if (!isDBConnected()) return true;
+  if (req.user?.isDemo) return true;
+  const idStr = (req.user?._id || req.user?.id || '').toString();
+  return idStr.startsWith('local-') || idStr.startsWith('demo-') || idStr.startsWith('user-');
+};
 
 /**
  * @desc    Get system-wide platform statistics
@@ -11,6 +20,11 @@ const { successResponse, errorResponse } = require('../utils/responseHelper');
  * @access  Private (Admin Only)
  */
 const getPlatformStats = async (req, res) => {
+  if (isDemoUser(req)) {
+    const statsData = demoStore.getPlatformStats();
+    return successResponse(res, statsData);
+  }
+
   const totalUsers = await User.countDocuments();
   const totalStudents = await User.countDocuments({ role: 'student' });
   const totalAdmins = await User.countDocuments({ role: 'admin' });
@@ -42,6 +56,13 @@ const getPlatformStats = async (req, res) => {
  */
 const getAllUsers = async (req, res) => {
   const { role, search } = req.query;
+
+  if (isDemoUser(req)) {
+    const users = demoStore.getUsers({ role, search });
+    return successResponse(res, { users, count: users.length });
+  }
+
+
   const query = {};
 
   if (role && role !== 'all') {
@@ -70,6 +91,14 @@ const updateUserRole = async (req, res) => {
     return errorResponse(res, 'Invalid role specified. Must be student or admin.', 400);
   }
 
+  if (isDemoUser(req) || req.params.id.startsWith('demo-') || req.params.id.startsWith('user-')) {
+    const user = demoStore.updateUserRole(req.params.id, role);
+    if (!user) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    return successResponse(res, { user }, `User role updated to ${role}`);
+  }
+
   const user = await User.findById(req.params.id);
   if (!user) {
     return errorResponse(res, 'User not found', 404);
@@ -92,6 +121,14 @@ const updateUserRole = async (req, res) => {
  * @access  Private (Admin Only)
  */
 const deleteUser = async (req, res) => {
+  if (isDemoUser(req) || req.params.id.startsWith('demo-') || req.params.id.startsWith('user-')) {
+    const deleted = demoStore.deleteUser(req.params.id);
+    if (!deleted) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    return successResponse(res, {}, 'User removed from platform successfully');
+  }
+
   const user = await User.findById(req.params.id);
 
   if (!user) {
@@ -113,6 +150,13 @@ const deleteUser = async (req, res) => {
  * @access  Private (Admin Only)
  */
 const getAllContent = async (req, res) => {
+  if (isDemoUser(req)) {
+    return successResponse(res, {
+      materials: demoStore.getMaterials(),
+      quizzes: demoStore.getQuizzes(),
+    });
+  }
+
   const materials = await Material.find().sort('-createdAt').populate('uploadedBy', 'name email');
   const quizzes = await Quiz.find().sort('-createdAt').populate('createdBy', 'name email');
 
@@ -122,6 +166,7 @@ const getAllContent = async (req, res) => {
   });
 };
 
+
 module.exports = {
   getPlatformStats,
   getAllUsers,
@@ -129,3 +174,4 @@ module.exports = {
   deleteUser,
   getAllContent,
 };
+

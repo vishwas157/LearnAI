@@ -21,7 +21,17 @@ export const quizService = {
     return res.data;
   },
 
+  submitQuizAttempt: async (id, attemptData) => {
+    const res = await api.post(`/quiz/${id}/attempt`, attemptData);
+    return res.data;
+  },
+
   getAttempts: async () => {
+    const res = await api.get('/quiz/attempts');
+    return res.data;
+  },
+
+  getQuizAttempts: async () => {
     const res = await api.get('/quiz/attempts');
     return res.data;
   },
@@ -36,3 +46,4 @@ export const quizService = {
     return res.data;
   },
 };
+

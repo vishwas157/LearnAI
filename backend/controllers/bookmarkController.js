@@ -1,5 +1,14 @@
 const Bookmark = require('../models/Bookmark');
+const demoStore = require('../services/demoStore');
+const { isDBConnected } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
+
+const isDemoUser = (req) => {
+  if (!isDBConnected()) return true;
+  if (req.user?.isDemo) return true;
+  const idStr = (req.user?._id || req.user?.id || '').toString();
+  return idStr.startsWith('local-') || idStr.startsWith('demo-') || idStr.startsWith('user-');
+};
 
 /**
  * @desc    Get user's bookmarks
@@ -8,6 +17,12 @@ const { successResponse, errorResponse } = require('../utils/responseHelper');
  */
 const getBookmarks = async (req, res) => {
   const { type, search } = req.query;
+
+  if (isDemoUser(req)) {
+    const bookmarks = demoStore.getBookmarks(req.user?._id, { type, search });
+    return successResponse(res, { bookmarks, count: bookmarks.length });
+  }
+
   const query = { user: req.user._id };
 
   if (type && type !== 'all') {
@@ -33,6 +48,19 @@ const createBookmark = async (req, res) => {
 
   if (!type || !title || !content) {
     return errorResponse(res, 'Bookmark type, title, and content are required', 400);
+  }
+
+  if (isDemoUser(req)) {
+    const bookmark = demoStore.createBookmark({
+      type,
+      referenceId: referenceId || null,
+      title,
+      content,
+      tags: Array.isArray(tags) ? tags : (tags ? [tags] : []),
+      metadata: metadata || {},
+    }, req.user);
+
+    return successResponse(res, { bookmark }, 'Bookmark saved successfully', 201);
   }
 
   // Prevent duplicates if referenceId is provided
@@ -62,6 +90,14 @@ const createBookmark = async (req, res) => {
  * @access  Private
  */
 const deleteBookmark = async (req, res) => {
+  if (isDemoUser(req) || req.params.id.startsWith('bm-')) {
+    const deleted = demoStore.deleteBookmark(req.params.id, req.user?._id);
+    if (!deleted) {
+      return errorResponse(res, 'Bookmark not found', 404);
+    }
+    return successResponse(res, {}, 'Bookmark removed successfully');
+  }
+
   const bookmark = await Bookmark.findOneAndDelete({ _id: req.params.id, user: req.user._id });
 
   if (!bookmark) {
@@ -76,3 +112,5 @@ module.exports = {
   createBookmark,
   deleteBookmark,
 };
+
+

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const { isDBConnected } = require('../config/db');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/emailService');
 const { isDisposableEmail } = require('../utils/disposableEmailBlocklist');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
@@ -10,6 +11,19 @@ const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET || 'learnai_jwt_secret', {
     expiresIn: '30d',
   });
+};
+
+const generateLocalToken = (user) => {
+  const jsonStr = JSON.stringify({
+    id: user._id || user.id,
+    _id: user._id || user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    preferredLanguage: user.preferredLanguage,
+    emailVerified: user.emailVerified,
+  });
+  return `local_${Buffer.from(jsonStr).toString('base64')}`;
 };
 
 /**
@@ -38,6 +52,28 @@ const register = async (req, res) => {
   const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,})+$/;
   if (!emailRegex.test(normalizedEmail)) {
     return errorResponse(res, 'Please provide a valid academic or personal email address', 400);
+  }
+
+  if (!isDBConnected()) {
+    const newUser = {
+      id: `user-${Date.now()}`,
+      _id: `user-${Date.now()}`,
+      name: name.trim(),
+      email: normalizedEmail,
+      role: ['student', 'teacher', 'admin'].includes(role) ? role : 'student',
+      preferredLanguage: ['en', 'hi', 'gu'].includes(preferredLanguage) ? preferredLanguage : 'en',
+      avatar: 'avatar-1',
+      emailVerified: true,
+      studyStreak: 1,
+      createdAt: new Date().toISOString(),
+    };
+
+    const token = generateLocalToken(newUser);
+
+    return successResponse(res, {
+      user: newUser,
+      token,
+    }, 'Registration successful! Account created.', 201);
   }
 
   // Check if user already exists
@@ -111,7 +147,66 @@ const login = async (req, res) => {
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  // Check for user
+  // Demo accounts
+  const demoAccounts = {
+    'student@learnai.com': {
+      password: 'password123',
+      name: 'Demo Student',
+      role: 'student',
+    },
+    'admin@learnai.com': {
+      password: 'adminpassword123',
+      name: 'LearnAI Admin',
+      role: 'admin',
+    },
+  };
+
+  if (demoAccounts[normalizedEmail]) {
+    const demoAcc = demoAccounts[normalizedEmail];
+    if (password !== demoAcc.password) {
+      return errorResponse(res, 'Invalid email or password', 401);
+    }
+    const loggedInUser = {
+      id: normalizedEmail === 'admin@learnai.com' ? 'demo-admin-id' : 'demo-student-id',
+      _id: normalizedEmail === 'admin@learnai.com' ? 'demo-admin-id' : 'demo-student-id',
+      name: demoAcc.name,
+      email: normalizedEmail,
+      role: demoAcc.role,
+      preferredLanguage: 'en',
+      avatar: 'avatar-1',
+      emailVerified: true,
+      studyStreak: 1,
+      createdAt: new Date().toISOString(),
+    };
+    const token = generateLocalToken(loggedInUser);
+    return successResponse(res, {
+      user: loggedInUser,
+      token,
+    }, 'Login successful');
+  }
+
+  if (!isDBConnected()) {
+    // If DB is disconnected and not pre-defined demo account, accept local credentials
+    const localUser = {
+      id: `user-${Date.now()}`,
+      _id: `user-${Date.now()}`,
+      name: normalizedEmail.split('@')[0],
+      email: normalizedEmail,
+      role: 'student',
+      preferredLanguage: 'en',
+      avatar: 'avatar-1',
+      emailVerified: true,
+      studyStreak: 1,
+      createdAt: new Date().toISOString(),
+    };
+    const token = generateLocalToken(localUser);
+    return successResponse(res, {
+      user: localUser,
+      token,
+    }, 'Login successful (Demo Mode)');
+  }
+
+  // Check for user in MongoDB
   const user = await User.findOne({ email: normalizedEmail }).select('+password');
   if (!user) {
     return errorResponse(res, 'Invalid email or password', 401);
@@ -166,6 +261,23 @@ const login = async (req, res) => {
  * @access  Private
  */
 const getMe = async (req, res) => {
+  if (!isDBConnected() || req.user?.isDemo) {
+    return successResponse(res, {
+      user: {
+        id: req.user._id || req.user.id,
+        _id: req.user._id || req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+        preferredLanguage: req.user.preferredLanguage,
+        avatar: req.user.avatar || 'avatar-1',
+        emailVerified: req.user.emailVerified,
+        studyStreak: req.user.studyStreak || 1,
+        createdAt: req.user.createdAt || new Date().toISOString(),
+      }
+    });
+  }
+
   const user = await User.findById(req.user._id);
   if (!user) {
     return errorResponse(res, 'User not found', 404);
@@ -192,12 +304,24 @@ const getMe = async (req, res) => {
  * @access  Private
  */
 const updateProfile = async (req, res) => {
+  const { name, preferredLanguage, avatar, currentPassword, newPassword } = req.body;
+
+  if (!isDBConnected() || req.user?.isDemo) {
+    const updatedUser = {
+      ...req.user,
+      name: name?.trim() || req.user.name,
+      preferredLanguage: preferredLanguage || req.user.preferredLanguage,
+      avatar: avatar || req.user.avatar || 'avatar-1',
+    };
+    return successResponse(res, {
+      user: updatedUser,
+    }, 'Profile updated successfully');
+  }
+
   const user = await User.findById(req.user._id).select('+password');
   if (!user) {
     return errorResponse(res, 'User not found', 404);
   }
-
-  const { name, preferredLanguage, avatar, currentPassword, newPassword } = req.body;
 
   if (name) user.name = name;
   if (preferredLanguage) user.preferredLanguage = preferredLanguage;
@@ -239,3 +363,4 @@ module.exports = {
   getMe,
   updateProfile,
 };
+

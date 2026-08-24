@@ -1,7 +1,16 @@
 const Material = require('../models/Material');
 const Quiz = require('../models/Quiz');
 const Bookmark = require('../models/Bookmark');
+const demoStore = require('../services/demoStore');
+const { isDBConnected } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
+
+const isDemoUser = (req) => {
+  if (!isDBConnected()) return true;
+  if (req.user?.isDemo) return true;
+  const idStr = (req.user?._id || req.user?.id || '').toString();
+  return idStr.startsWith('local-') || idStr.startsWith('demo-') || idStr.startsWith('user-');
+};
 
 /**
  * @desc    Global search across materials, quizzes, and bookmarks
@@ -13,6 +22,18 @@ const globalSearch = async (req, res) => {
 
   if (!q || q.trim() === '') {
     return successResponse(res, { results: { materials: [], quizzes: [], bookmarks: [] }, totalCount: 0 });
+  }
+
+  if (isDemoUser(req)) {
+    const results = demoStore.search(q, category);
+
+    const totalCount = (results.materials?.length || 0) + (results.quizzes?.length || 0) + (results.bookmarks?.length || 0);
+    return successResponse(res, {
+      query: q,
+      category,
+      results,
+      totalCount,
+    });
   }
 
   const searchRegex = new RegExp(q.trim(), 'i');
@@ -65,3 +86,4 @@ const globalSearch = async (req, res) => {
 };
 
 module.exports = { globalSearch };
+
