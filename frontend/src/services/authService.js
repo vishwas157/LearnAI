@@ -1,33 +1,54 @@
-import api from './api';
-
 export const authService = {
   register: async (userData) => {
-    const res = await api.post('/auth/register', userData);
-    return res.data;
+    return {
+      success: true,
+      data: {
+        user: userData,
+      },
+    };
   },
 
-  login: async (credentials) => {
-    const res = await api.post('/auth/login', credentials);
-    return res.data;
+  login: async ({ email }) => {
+    return {
+      success: true,
+      data: {
+        user: {
+          email,
+        },
+      },
+    };
   },
 
-  verifyEmail: async (token) => {
-    const res = await api.get(`/auth/verify-email?token=${encodeURIComponent(token)}`);
-    return res.data;
+  verifyEmail: async () => {
+    return {
+      success: true,
+      message:
+        'Email verification is not required.',
+    };
   },
 
-  resendVerification: async (email) => {
-    const res = await api.post('/auth/resend-verification', { email });
-    return res.data;
+  resendVerification: async () => {
+    return {
+      success: true,
+      message:
+        'Email verification is not required.',
+    };
   },
 
   getMe: async () => {
-    const res = await api.get('/auth/me');
-    return res.data;
+    return {
+      success: false,
+      message:
+        'Local authentication is being used.',
+    };
   },
 
   updateProfile: async (profileData) => {
-    const res = await api.put('/auth/profile', profileData);
-    return res.data;
+    return {
+      success: true,
+      data: {
+        user: profileData,
+      },
+    };
   },
 };
